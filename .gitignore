@@ -1,0 +1,36 @@
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# 环境
+.env
+venv/
+.venv/
+.conda/
+env/
+
+# 数据文件 (太大不该 commit)
+data/raw/
+data/processed/
+*.tif
+*.tiff
+*.zip
+
+# 模型权重
+*.pth
+*.pt
+*.ckpt
+results/checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 保留空目录占位
+!.gitkeep

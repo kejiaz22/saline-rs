@@ -1,0 +1,27 @@
+name: saline
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - gdal
+  - rasterio
+  - geopandas
+  - shapely
+  - pyproj
+  - earthengine-api
+  - geemap
+  - scikit-learn
+  - numpy
+  - pandas
+  - matplotlib
+  - seaborn
+  - jupyter
+  - tqdm
+  - pip
+  - pip:
+      # PyTorch 先装 CPU 版占位; Week B 训练时手动换 CUDA 版
+      - torch
+      - torchvision
+      - timm
+      - einops
+      - wandb
