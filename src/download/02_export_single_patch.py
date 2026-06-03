@@ -6,6 +6,8 @@
   - 东北松嫩   (吉林大安东)     -> test_patch_daan_001
 
 每个 patch 制作 S2(6 波段)+S1(2 波段) 共 8 波段合成影像, 提交到 Google Drive。
+全部波段统一 float32 (GEE 单文件不支持 mixed dtype, 见 src/utils/test_dtype.py),
+导出前 unmask 成 NoData=-9999, 并在 formatOptions 里声明 noData 标签。
 提交后立即退出, 不轮询等待。
 
 波段顺序: B2 B3 B4 B8 B11 B12 (S2) + VV VH (S1)
@@ -23,6 +25,7 @@ from config import GEE_PROJECT_ID, STUDY_AREAS, DATE_START, DATE_END
 
 HALF_DEG = 0.018  # 约 4km/2, 总边长 ~0.036 度 ≈ 4km
 MAX_CLOUD = 20
+NODATA = -9999  # 统一 NoData 值 (float32 可精确表示)
 
 S2_BANDS = ["B2", "B3", "B4", "B8", "B11", "B12"]
 S1_BANDS = ["VV", "VH"]
@@ -30,10 +33,10 @@ S1_BANDS = ["VV", "VH"]
 EXPORT_FOLDER = "saline_export"
 TASKS_URL = "https://code.earthengine.google.com/tasks"
 
-# 研究区 key -> 导出文件名前缀
+# 研究区 key -> 导出文件名前缀 (v2: float32 + NoData 方案)
 PATCH_NAMES = {
-    "huanghe": "test_patch_pingluo_001",
-    "songnen": "test_patch_daan_001",
+    "huanghe": "test_patch_pingluo_001_v2",
+    "songnen": "test_patch_daan_001_v2",
 }
 
 
@@ -56,7 +59,7 @@ def build_s2(bbox: ee.Geometry) -> ee.Image:
         .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", MAX_CLOUD))
         .map(mask_s2_clouds)
     )
-    return col.select(S2_BANDS).median().clip(bbox)
+    return col.select(S2_BANDS).median().clip(bbox).toFloat()  # -> float32
 
 
 def build_s1(bbox: ee.Geometry) -> ee.Image:
@@ -69,7 +72,7 @@ def build_s1(bbox: ee.Geometry) -> ee.Image:
         .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
         .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH"))
     )
-    return col.select(S1_BANDS).mean().clip(bbox)
+    return col.select(S1_BANDS).mean().clip(bbox).toFloat()  # -> float32
 
 
 def build_bbox(lat: float, lon: float) -> ee.Geometry:
@@ -84,6 +87,7 @@ def export_patch(key: str, area: dict) -> str:
     name = PATCH_NAMES[key]
     bbox = build_bbox(area["lat"], area["lon"])
     stacked = build_s2(bbox).addBands(build_s1(bbox))  # S2 6 + S1 2 = 8 波段
+    stacked = stacked.unmask(NODATA)  # masked 区域填 NoData
 
     task = ee.batch.Export.image.toDrive(
         image=stacked,
@@ -94,6 +98,7 @@ def export_patch(key: str, area: dict) -> str:
         region=bbox,
         crs="EPSG:4326",
         maxPixels=int(1e9),
+        formatOptions={"noData": NODATA},  # GeoTIFF NoData 标签
     )
     task.start()
 
