@@ -12,7 +12,8 @@ venv/
 env/
 
 # 数据文件 (太大不该 commit)
-data/raw/
+data/raw/*
+!data/raw/batch_v1_metadata.csv
 data/processed/
 *.tif
 *.tiff
