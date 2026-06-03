@@ -14,6 +14,9 @@ CHECKPOINTS_DIR = RESULTS_DIR / "checkpoints"
 # 全局常量
 RANDOM_SEED = 42
 
+# Google Earth Engine 项目 ID
+GEE_PROJECT_ID = "direct-archery-473217-s8"
+
 # 两个研究区中心坐标 (粗略, 后续精化)
 STUDY_AREAS = {
     "huanghe": {"name": "黄河中上游沿黄灌区 (银川附近)", "lat": 38.5, "lon": 106.2},
