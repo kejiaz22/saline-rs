@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""为每个 patch 计算光谱/SAR 指数, 给标注阶段提供客观参考 (非最终标签)。
+"""为每个 patch 计算光谱/SAR 指数 + salinity_prior 连续打分 (非最终标签)。
 
-遍历 data/raw 下所有 patch_*.tif (60 个), 每个计算 6 个指数, 输出逐 patch 汇总到
-data/labels/indices_summary.csv, 并打印整体分布与盐碱候选。
+遍历 data/raw 下所有 patch_*.tif (60 个), 每个计算 6 个指数 + VV 均值, 综合成一个
+基于 rank 的 salinity_prior 分数, 输出逐 patch 汇总到 data/labels/indices_summary.csv
+(按 salinity_prior 降序), 并打印分布与 Top/Bottom 候选。
 
 波段堆叠顺序 (rasterio 1-based): B2=1 B3=2 B4=3 B8=4 B11=5 B12=6 VV=7 VH=8
 
@@ -14,22 +15,23 @@ data/labels/indices_summary.csv, 并打印整体分布与盐碱候选。
   5. SR-SWIR   = B11 / B12                  盐结皮 SWIR 比值
 指数 (SAR):
   6. VH/VV     = VH / VV                    地表粗糙度 (盐碱异于农田/水体)
+  (另算 VV 均值, 用于 salinity_prior 的 low_vv 分量)
+
+salinity_prior: 对 5 个分量在 60 个 patch 内取 rank (favored 方向 -> 高 rank),
+归一化 0-1 后加权求和; water_dominant 的 patch 乘以惩罚系数压低。
 
 注意: 旧版 NDSI=(B4-B8)/(B4+B8) 恒等于 -NDVI (冗余), 已弃用。
 最终标签仍以 QGIS 目视为准, 本脚本只给一个起点。
 
 用法: conda run -n saline python src/preprocess/01_compute_indices.py
 """
-# TODO (Day 2): 当前的 likely_saline_candidate 启发式存在两个问题:
-#   1. SR-SWIR > 1.1 是恒真条件 (实际最小值 1.135), 没有过滤作用
-#   2. SI > median 实际未生效, 候选集退化为 bare_soil_dominant
-#
-# 明天讨论三个方案:
-#   (A) 快修: AND 替代 OR, 让 SWIR 真正过滤
-#   (B) 连续打分: salinity_prior 分数排序代替二分
-#   (C) 引入真值: 用中国土壤盐渍化 1:3200 万地图做客观锚点
-#
-# 决策见 chat session 2026-06-03。
+# 决策记录 (2026-06-03): 已选定方案 B (连续 salinity_prior 打分), 取代旧的二分
+#   likely_saline_candidate 启发式 (其 SR-SWIR>1.1 恒真、SI>median 未生效)。
+#   v2 调整: low_ndvi 权重升至主导 (0.35), 并加植被惩罚 ×0.4 (仿水体 ×0.1),
+#   解决"高植被污染 Top 榜"与"std 过小"两个问题。
+#   (注: 直接用 rank 而非 rank/n 加权对 std 是无效的仿射变换, 已弃用。)
+#   旧列 likely_saline_candidate 暂保留供对比, 后续可移除。
+#   方案 C (引入土壤盐渍化 1:3200 万真值地图) 留待标注阶段叠加。
 import sys
 import re
 from pathlib import Path
@@ -54,8 +56,20 @@ BARE_NDVI_MAX = 0.2        # 裸土: NDVI < 此值
 BARE_NDWI_MAX = 0.0        # 且 NDWI < 此值
 BARE_FRAC = 0.3            # 裸土像元占比 > 此值 -> bare_soil_dominant
 
-# --- 盐碱候选启发式 ---
-SR_SWIR_ALT = 1.1          # SR-SWIR 备选阈值
+# --- 旧启发式阈值 (仅为保留 likely_saline_candidate 列) ---
+SR_SWIR_ALT = 1.1
+
+# --- salinity_prior 权重 (可调) ---
+# low_ndvi 主导 (直接的"非植被"信号), SWIR 簇从 0.65 降到 0.50。
+WEIGHTS = {
+    "low_ndvi": 0.35,    # NDVI 低 (低植被) — 主导项
+    "si": 0.20,          # SI 高 = 盐分高
+    "ndsi_swir": 0.20,   # NDSI-SWIR 高
+    "sr_swir": 0.10,     # SR-SWIR 高
+    "low_vv": 0.15,      # VV 低 (后向散射低)
+}
+WATER_PENALTY = 0.1      # water_dominant 时乘此系数 (狠)
+VEG_PENALTY = 0.4        # vegetation_dominant 时乘此系数 (宽容: 植被下可能仍有盐碱)
 
 
 def norm_diff(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -122,14 +136,50 @@ def process(tif_path: Path) -> dict:
         "ndsi_swir_mean": round(vmean(ndsi_swir), 4),
         "sr_swir_mean": round(vmean(sr_swir), 4),
         "vh_vv_ratio_mean": round(vmean(vh_vv), 4),
+        "vv_mean": round(vmean(vv), 4),
         "water_dominant": water_frac > WATER_FRAC,
         "vegetation_dominant": veg_frac > VEG_FRAC,
         "bare_soil_dominant": bare_frac > BARE_FRAC,
     }
 
 
-def dist(s: pd.Series) -> str:
-    return f"min={s.min():.3f}  max={s.max():.3f}  mean={s.mean():.3f}  median={s.median():.3f}"
+def compute_salinity_prior(df: pd.DataFrame) -> pd.DataFrame:
+    """基于 rank 的加权 salinity_prior + 区内/总排名。"""
+    n = len(df)
+    # favored 方向 -> 高 rank (rank 60 最像盐碱), 归一化到 ~(0,1]
+    norm_rank = {
+        "si": df["si_mean"].rank(ascending=True) / n,           # SI 高
+        "ndsi_swir": df["ndsi_swir_mean"].rank(ascending=True) / n,  # NDSI-SWIR 高
+        "sr_swir": df["sr_swir_mean"].rank(ascending=True) / n,  # SR-SWIR 高
+        "low_ndvi": df["ndvi_mean"].rank(ascending=False) / n,   # NDVI 低
+        "low_vv": df["vv_mean"].rank(ascending=False) / n,       # VV 低
+    }
+    raw = sum(WEIGHTS[k] * norm_rank[k] for k in WEIGHTS)
+    # 乘法惩罚: 植被 ×0.4, 水体 ×0.1 (近乎互斥, 同时命中则连乘)
+    factor = np.ones(len(df))
+    factor = np.where(df["vegetation_dominant"], factor * VEG_PENALTY, factor)
+    factor = np.where(df["water_dominant"], factor * WATER_PENALTY, factor)
+    df["salinity_prior"] = np.round(raw * factor, 4)
+
+    df["rank_overall"] = (
+        df["salinity_prior"].rank(ascending=False, method="first").astype(int)
+    )
+    df["rank_in_region"] = (
+        df.groupby("region")["salinity_prior"]
+        .rank(ascending=False, method="first")
+        .astype(int)
+    )
+    return df.sort_values("salinity_prior", ascending=False).reset_index(drop=True)
+
+
+def show(sub: pd.DataFrame) -> None:
+    for _, r in sub.iterrows():
+        print(
+            f"  #{int(r['rank_overall']):2d} {r['patch_id']:20s} {r['region']:8s} "
+            f"prior={r['salinity_prior']:.4f} | SI={r['si_mean']:7.1f} "
+            f"NDSI-SWIR={r['ndsi_swir_mean']:6.3f} NDVI={r['ndvi_mean']:6.3f} "
+            f"VV={r['vv_mean']:7.2f}"
+        )
 
 
 def main() -> None:
@@ -139,7 +189,7 @@ def main() -> None:
     rows = [r for r in (process(p) for p in tifs) if r is not None]
     df = pd.DataFrame(rows)
 
-    # --- 盐碱候选 (依赖全体中位数, 第二遍) ---
+    # 旧二分启发式 (保留列, 供对比)
     si_med = df["si_mean"].median()
     ndsi_med = df["ndsi_swir_mean"].median()
     df["likely_saline_candidate"] = (
@@ -149,37 +199,42 @@ def main() -> None:
         & (~df["water_dominant"])
     )
 
-    OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(OUT_CSV, index=False, encoding="utf-8-sig")
+    # 方案 B: 连续打分
+    df = compute_salinity_prior(df)
 
-    # --- 汇总 ---
-    print("=" * 64)
-    for col in (
-        "ndvi_mean",
-        "ndwi_mean",
-        "si_mean",
-        "ndsi_swir_mean",
-        "sr_swir_mean",
-        "vh_vv_ratio_mean",
-    ):
-        print(f"{col:18s}: {dist(df[col])}")
-    print("-" * 64)
-    print(f"water_dominant      : {int(df['water_dominant'].sum())} 个")
-    print(f"vegetation_dominant : {int(df['vegetation_dominant'].sum())} 个")
-    print(f"bare_soil_dominant  : {int(df['bare_soil_dominant'].sum())} 个")
-    print("-" * 64)
-    cand = df[df["likely_saline_candidate"]]
-    by_region = cand.groupby("region").size().to_dict()
+    # 输出列顺序
+    cols = [
+        "patch_id", "region", "salinity_prior", "rank_overall", "rank_in_region",
+        "ndvi_mean", "ndwi_mean", "si_mean", "ndsi_swir_mean", "sr_swir_mean",
+        "vh_vv_ratio_mean", "vv_mean",
+        "water_dominant", "vegetation_dominant", "bare_soil_dominant",
+        "likely_saline_candidate",
+    ]
+    OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
+    df[cols].to_csv(OUT_CSV, index=False, encoding="utf-8-sig")
+
+    # --- 控制台输出 ---
+    sp = df["salinity_prior"]
+    print("=" * 78)
     print(
-        f"likely_saline_candidate: {len(cand)} 个  "
-        f"(pingluo {by_region.get('pingluo', 0)}, daan {by_region.get('daan', 0)})"
+        f"salinity_prior 分布: min={sp.min():.4f}  max={sp.max():.4f}  "
+        f"mean={sp.mean():.4f}  median={sp.median():.4f}  std={sp.std():.4f}"
     )
-    print(f"  启发式: bare_soil_dominant & SI>中位({si_med:.1f}) & "
-          f"(NDSI-SWIR>中位({ndsi_med:.4f}) 或 SR-SWIR>{SR_SWIR_ALT}) & 非水体")
-    if len(cand):
-        print("  候选 patch_id:")
-        for pid in cand["patch_id"].tolist():
-            print(f"    {pid}")
+    print("-" * 78)
+    print("Top 10 候选 (总排名):")
+    show(df.head(10))
+    print("-" * 78)
+    print("Bottom 10 (总排名):")
+    show(df.tail(10))
+    print("-" * 78)
+    for reg in ("pingluo", "daan"):
+        print(f"{reg} 区 Top 5:")
+        show(df[df["region"] == reg].head(5))
+    print("=" * 78)
+    print("⚠️ salinity_prior 是基于指数排名的客观先验, 不是 ground truth。")
+    print("   最终标签由 QGIS 目视判断决定。")
+    print("   高 prior 不代表一定是盐碱, 低 prior 不代表一定不是。")
+    print("   此分数仅用于引导标注顺序与边缘案例参考。")
     print(f"输出: {OUT_CSV}")
 
 
