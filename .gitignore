@@ -16,6 +16,9 @@ data/raw/*
 !data/raw/batch_v1_metadata.csv
 !data/raw/batch_v1_quality_report.csv
 data/processed/
+
+# 标注预览图 (派生物, 54MB, 可由 preprocess_preview.py 重新生成)
+data/labels/preview_images/
 *.tif
 *.tiff
 *.zip
