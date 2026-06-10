@@ -2,7 +2,6 @@
 
 ## 项目背景
 - 研究者: Kejia (UC Davis, Environmental Science Data track)
-- 时长: 原本 8 周课题,因时间紧压缩到 **2 周抢救版**
 - 目标: 基于 Sentinel-1 SAR + Sentinel-2 光学数据,实现中国典型区域盐碱地分类,精度较传统方法 (SVM/RF) 提升 10% 以上
 
 ## 2 周抢救版的关键决策 (砍掉范围)
