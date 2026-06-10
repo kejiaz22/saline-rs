@@ -34,11 +34,13 @@ BAND_NAMES = ["B2", "B3", "B4", "B8", "B11", "B12", "VV", "VH"]
 # --- 训练超参 ---
 BATCH_SIZE = 8
 EPOCHS = 50
-LR = 1e-4
+# v1 不稳定调参 (基于 5-fold 发现: F1 std>mean, Fold5 best_epoch=0 即初始化即最优):
+LR = 5e-5                       # 1e-4 -> 5e-5: 降学习率, 减少"初始化即最优"早停现象
 WEIGHT_DECAY = 1e-3
 T_MAX = 50                      # CosineAnnealingLR
-EARLY_STOP_PATIENCE = 10
+EARLY_STOP_PATIENCE = 20        # 10 -> 20: 给模型更多机会学 (避免过早早停)
 N_SPLITS = 5
+N_REPEATS = 3                   # 5x3=15 fold 估计, 收窄 CI (Change 1)
 
 # --- 结果文件 ---
 RESULTS_JSON = RESULTS_DIR / "resnet50_results.json"

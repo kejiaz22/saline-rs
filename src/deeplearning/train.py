@@ -22,7 +22,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score, confusion_matrix,
 )
@@ -125,8 +125,10 @@ def main() -> None:
     print(f"samples: {len(items)}  (saline={int((y_all==1).sum())}, "
           f"non={int((y_all==0).sum())})")
 
-    skf = StratifiedKFold(n_splits=cfg.N_SPLITS, shuffle=True,
-                          random_state=cfg.RANDOM_SEED)
+    # v1 单次 5-fold 方差极大 (F1 std>mean, Fold5 best_epoch=0 即初始化即最优).
+    # 改 5x3=15 个 fold 估计 -> CI 收窄, 结果更可信。
+    skf = RepeatedStratifiedKFold(n_splits=cfg.N_SPLITS, n_repeats=cfg.N_REPEATS,
+                                  random_state=cfg.RANDOM_SEED)
     fold_results = []
     for fold, (tr, va) in enumerate(skf.split(np.zeros(len(items)), y_all)):
         print(f"=== Fold {fold} (train={len(tr)} val={len(va)}) ===")
@@ -138,10 +140,11 @@ def main() -> None:
         vals = np.array([r[k] for r in fold_results])
         std = float(np.std(vals, ddof=1))
         agg[k] = {"mean": float(vals.mean()), "std": std,
-                  "ci95": ci95(std, cfg.N_SPLITS)}
+                  "ci95": ci95(std, len(fold_results))}
 
     print("\n" + "=" * 60)
-    print("ResNet50 (8ch) 5-fold 结果")
+    print(f"ResNet50 (8ch) {cfg.N_SPLITS}x{cfg.N_REPEATS} RepeatedSKF "
+          f"({len(fold_results)} folds) 结果")
     print("=" * 60)
     for k in ("accuracy", "f1", "f1_macro", "precision", "recall"):
         m = agg[k]
