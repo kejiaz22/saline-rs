@@ -39,6 +39,7 @@ LR = 5e-5                       # 1e-4 -> 5e-5: 降学习率, 减少"初始化�
 WEIGHT_DECAY = 1e-3
 T_MAX = 50                      # CosineAnnealingLR
 EARLY_STOP_PATIENCE = 20        # 10 -> 20: 给模型更多机会学 (避免过早早停)
+MIN_EPOCHS_BEFORE_EARLY_STOP = 10  # v3: 强制最少跑 10 epoch, 防 epoch0 虚假最优即早停
 N_SPLITS = 5
 N_REPEATS = 3                   # 5x3=15 fold 估计, 收窄 CI (Change 1)
 

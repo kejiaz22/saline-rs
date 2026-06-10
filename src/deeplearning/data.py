@@ -80,6 +80,15 @@ class PatchDataset(Dataset):
         k = int(torch.randint(0, 4, (1,)).item())  # 0/90/180/270 度
         if k:
             x = torch.rot90(x, k, dims=[-2, -1])
+        # v3 新增: 随机 gain (模拟光照/大气波动)。作用于已归一化数据,
+        # NoData 在归一化时已成 0, 0*gain=0, 不受影响 (见 _read_normalized)。
+        gain = 0.9 + 0.2 * torch.rand(1).item()     # [0.9, 1.1)
+        x = x * gain                                 # 此处已是新张量
+        # v3 新增: 随机通道丢弃 (p=0.2), 强制模型不依赖单一波段。
+        # 置 0 即该波段的归一化均值 (中性), 不破坏 NoData 语义。
+        if torch.rand(1).item() < 0.2:
+            ch = int(torch.randint(0, x.shape[0], (1,)).item())
+            x[ch] = 0
         return x
 
     def __getitem__(self, idx: int):

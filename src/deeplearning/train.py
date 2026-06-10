@@ -73,7 +73,10 @@ def train_one_fold(items: list, train_idx, val_idx, fold_num: int,
     model = build_resnet50_8channel().to(cfg.DEVICE)
     optimizer = AdamW(model.parameters(), lr=cfg.LR, weight_decay=cfg.WEIGHT_DECAY)
     scheduler = CosineAnnealingLR(optimizer, T_max=cfg.T_MAX)
-    criterion = nn.CrossEntropyLoss()
+    # v3: v2 模型保守 (Precision 0.74 / Recall 0.46, 漏掉一半 saline)。
+    # 用类别权重补偿不平衡 (21 saline : 39 non = 1 : 1.86), 提升对 saline 的召回。
+    class_weights = torch.tensor([1.0, 39.0 / 21.0]).to(cfg.DEVICE)
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     cfg.CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
     ckpt_path = cfg.CHECKPOINTS_DIR / f"resnet50_fold{fold_num}.pt"
@@ -104,7 +107,10 @@ def train_one_fold(items: list, train_idx, val_idx, fold_num: int,
         print(f"  fold{fold_num} epoch{epoch:02d} "
               f"val_f1={metrics['f1']:.3f} best={best_f1:.3f} "
               f"(no_improve={no_improve})")
-        if no_improve >= cfg.EARLY_STOP_PATIENCE:
+        # v3: v2 里 4/15 fold 在 epoch=0 即被判"最优" (初始 fc 碰巧给出还行 F1),
+        # 之后再没超过这个虚假最优 -> 模型没机会学。强制最少跑 MIN_EPOCHS 个 epoch。
+        if (epoch >= cfg.MIN_EPOCHS_BEFORE_EARLY_STOP
+                and no_improve >= cfg.EARLY_STOP_PATIENCE):
             print(f"  fold{fold_num} early stop @ epoch {epoch}")
             break
 
