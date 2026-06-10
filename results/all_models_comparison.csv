@@ -1,0 +1,5 @@
+﻿model,cv,f1_mean,f1_std,f1_ci_low,f1_ci_high,accuracy,f1_macro,precision,recall,improvement_vs_rf_pct
+SVM,5x10 nested,0.5442,0.222,0.4827,0.6057,0.7117,0.6627,0.6186,0.533,-3.5
+RF,5x10 fixed,0.5637,0.2165,0.5036,0.6237,0.7533,0.694,0.7233,0.502,0.0
+ResNet50,5x3 repeated,0.6753,0.1901,0.5791,0.7715,0.8111,0.7689,0.85,0.6067,19.8
+EfficientViT-M2,5x3 repeated,0.6938,0.1528,0.6164,0.7711,0.7778,0.7564,0.6943,0.7467,23.1
