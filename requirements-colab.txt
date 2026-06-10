@@ -1,6 +1,4 @@
 # Colab 额外依赖 (在 Colab notebook 首格 pip install -r requirements-colab.txt)
-# 不含 torch/torchvision —— Colab 自带 CUDA 版, 勿覆盖。
+# 不列 torch/torchvision/pandas/scikit-learn —— Colab 自带。
 rasterio
 timm
-pandas
-scikit-learn
